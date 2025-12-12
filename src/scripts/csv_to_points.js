@@ -54,7 +54,9 @@ function parseCSVToPoints(csvData) {
     const material = new THREE.PointsMaterial({
         size: 2,
         vertexColors: true,
-        sizeAttenuation: false
+        sizeAttenuation: false,
+        depthWrite: false,
+        transparent: true, // this makes SAOPass able to skip it
     });
 
     const pointCloud = new THREE.Points(geometry, material);

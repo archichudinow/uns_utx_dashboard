@@ -81,6 +81,7 @@ saoPass.params.saoBlur = true;            // smooth AO
 saoPass.params.saoBlurRadius = 1;         
 saoPass.params.saoBlurStdDev = 4;         
 saoPass.params.saoBlurDepthCutoff = 0.01; // prevent over-blur
+saoPass.params.saoSkipTransparent = true;
 
 composer.addPass(saoPass);
 
