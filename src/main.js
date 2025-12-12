@@ -3,9 +3,15 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { loadCSV } from './scripts/csv_to_points.js';
 import { Pane } from 'tweakpane';
+import Stats from 'stats.js';
 import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { SAOPass } from 'three/addons/postprocessing/SAOPass.js';
+
+// Stats (FPS counter)
+const stats = new Stats();
+stats.showPanel(0); // 0 = fps
+document.body.appendChild(stats.dom);
 
 // Scene setup
 const scene = new THREE.Scene();
@@ -23,7 +29,7 @@ const shadowPlane = new THREE.Mesh(
   new THREE.ShadowMaterial({ color: 0x000000, opacity: 0.1 }) // shadow color + opacity
 );
 shadowPlane.rotation.x = -Math.PI / 2;
-shadowPlane.position.y = -0.2;
+shadowPlane.position.y = -1.0;
 shadowPlane.receiveShadow = true;
 scene.add(shadowPlane);
 
@@ -34,15 +40,15 @@ scene.add(ambientLight);
 const dirLight = new THREE.DirectionalLight(0xffffff, 1);
 dirLight.position.set(500, 1000, -700);
 dirLight.castShadow = true;
-dirLight.shadow.mapSize.width = 4096;
-dirLight.shadow.mapSize.height = 4096;
+dirLight.shadow.mapSize.width = 2048;
+dirLight.shadow.mapSize.height = 2048;
 dirLight.shadow.camera.left = -300;
 dirLight.shadow.camera.right = 300;
 dirLight.shadow.camera.top = 300;
 dirLight.shadow.camera.bottom = -300;
 dirLight.shadow.camera.near = 1;
-dirLight.shadow.camera.far = 5000;
-dirLight.shadow.bias = -0.00001;
+dirLight.shadow.camera.far = 1000;
+dirLight.shadow.bias = -0.0001;
 scene.add(dirLight);
 
 // Camera
@@ -72,16 +78,14 @@ const saoPass = new SAOPass(scene, camera, false, true);
 saoPass.params.output = SAOPass.OUTPUT.Default;
 
 // AO settings
-saoPass.params.saoIntensity = 0.05;        // AO darkness
-saoPass.params.saoBias = 0.1;             // shadow acne fix
-saoPass.params.saoScale = 1000;           // match your model size
-saoPass.params.saoKernelRadius = 100;     // AO sample radius
-saoPass.params.saoSamples = 2;           // AO sample count (higher = smoother)
-saoPass.params.saoBlur = true;            // smooth AO
-saoPass.params.saoBlurRadius = 1;         
-saoPass.params.saoBlurStdDev = 4;         
-saoPass.params.saoBlurDepthCutoff = 0.01; // prevent over-blur
+saoPass.params.saoIntensity = 0.05;
+saoPass.params.saoBias = 0.2;
+saoPass.params.saoScale = 1000;          // slightly smaller
+saoPass.params.saoKernelRadius = 100;    // smaller radius
+saoPass.params.saoSamples = 1;          // fewer samples
+saoPass.params.saoBlur = false;         // skip blur
 saoPass.params.saoSkipTransparent = true;
+saoPass.resolution.set(window.innerWidth / 6, window.innerHeight / 6); // render at half res
 
 composer.addPass(saoPass);
 
@@ -91,7 +95,7 @@ controls.enableDamping = true;
 controls.target.set(0, 0, -250);
 controls.update();
 controls.autoRotate = true;
-controls.autoRotateSpeed = 0.3;
+controls.autoRotateSpeed = 0.0;
 
 // TweakPane
 const pane = new Pane();
@@ -168,8 +172,10 @@ window.addEventListener('resize', () => {
 
 // Render loop
 const renderLoop = () => {
+  stats.begin();
   controls.update();
   composer.render(); // use composer to render AO
+  stats.end();
   requestAnimationFrame(renderLoop);
 };
 
