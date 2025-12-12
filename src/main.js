@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
-import { loadCSV } from './csv_to_points.js';
+import { loadCSV } from './scripts/csv_to_points.js';
 import { Pane } from 'tweakpane';
 
 // Scene setup
@@ -64,7 +64,7 @@ const gltfParams = { visible: true };
 // Load the GLTF model
 const loader = new GLTFLoader();
 loader.load(
-  './models/map.glb',
+  '/models/map.glb',
   function (gltf) {
     const object = gltf.scene;
     objects.gltfModel = object;
@@ -94,16 +94,16 @@ loader.load(
 
 // Load CSV data
 const csvUrls = [
-  './csv/P1_S2_CHART.csv',
-  './csv/P1_S4_CHART.csv',
-  './csv/P2_S1A_CHART.csv',
-  './csv/P2_S2_CHART.csv',
-  './csv/P2_S3_CHART.csv',
-  './csv/P2_S4_CHART.csv',
-  './csv/P3_S1A_CHART.csv',
-  './csv/P3_S2_CHART.csv',
-  './csv/P3_S3_CHART.csv',
-  './csv/P3_S4_CHART.csv',
+  '/csv/P1_S2_CHART.csv',
+  '/csv/P1_S4_CHART.csv',
+  '/csv/P2_S1A_CHART.csv',
+  '/csv/P2_S2_CHART.csv',
+  '/csv/P2_S3_CHART.csv',
+  '/csv/P2_S4_CHART.csv',
+  '/csv/P3_S1A_CHART.csv',
+  '/csv/P3_S2_CHART.csv',
+  '/csv/P3_S3_CHART.csv',
+  '/csv/P3_S4_CHART.csv',
 ];
 
 async function loadAndAddPoints(csvUrls) {
