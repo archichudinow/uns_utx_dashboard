@@ -3,18 +3,15 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
-import { SAOPass } from 'three/examples/jsm/postprocessing/SAOPass.js';
 
 import { loadCSV } from './scripts/csv_to_points.js';
 import { Pane } from 'tweakpane';
 import Stats from 'stats.js';
 
-
 /* ---------------------------------------------------- */
 /* BASIC SETUP                                          */
 /* ---------------------------------------------------- */
 const stats = new Stats();
-stats.showPanel(0);
 document.body.appendChild(stats.dom);
 
 const scene = new THREE.Scene();
@@ -24,37 +21,21 @@ scene.add(new THREE.AmbientLight(0xffffff, 2.5));
 
 const dirLight = new THREE.DirectionalLight(0xffffff, 1);
 dirLight.position.set(500, 1000, -700);
-dirLight.castShadow = true;
 scene.add(dirLight);
 
 /* ---------------------------------------------------- */
 /* CAMERA / RENDERER                                    */
 /* ---------------------------------------------------- */
-const camera = new THREE.PerspectiveCamera(
-  12,
-  window.innerWidth / window.innerHeight,
-  1,
-  10000
-);
+const camera = new THREE.PerspectiveCamera(12, window.innerWidth / window.innerHeight, 1, 10000);
 camera.position.set(-400, 600, -1000);
 
 const canvas = document.querySelector('canvas.threejs');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-renderer.shadowMap.enabled = true;
-renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 4;
 
-/* ---------------------------------------------------- */
-/* POST FX                                              */
-/* ---------------------------------------------------- */
 const composer = new EffectComposer(renderer);
 composer.addPass(new RenderPass(scene, camera));
-
-//const saoPass = new SAOPass(scene, camera);
-//saoPass.params.saoIntensity = 0.05;
-//composer.addPass(saoPass);
 
 /* ---------------------------------------------------- */
 /* CONTROLS                                             */
@@ -67,10 +48,6 @@ controls.target.set(0, 0, -250);
 /* UI                                                   */
 /* ---------------------------------------------------- */
 const pane = new Pane();
-const tab = pane.addTab({
-  pages: [{ title: 'Models' }, { title: 'Point Clouds' }]
-});
-
 
 /* ---------------------------------------------------- */
 /* STORAGE                                              */
@@ -81,49 +58,47 @@ const objects = {
 };
 
 /* ---------------------------------------------------- */
-/* LOAD GLTF + INIT VERTEX COLORS                       */
+/* GLTF + HEAT BUFFERS                                  */
 /* ---------------------------------------------------- */
-function initVertexColors(mesh) {
+function initVertexData(mesh) {
   if (mesh.geometry.index) {
     mesh.geometry = mesh.geometry.toNonIndexed();
   }
 
   const pos = mesh.geometry.attributes.position;
   const colors = new Float32Array(pos.count * 3);
+  const heat = new Float32Array(pos.count);
 
+  // start blue
   for (let i = 0; i < pos.count; i++) {
-    colors[i * 3 + 2] = 1; // blue
+    colors[i * 3 + 2] = 1;
   }
 
-  mesh.geometry.setAttribute(
-    'color',
-    new THREE.BufferAttribute(colors, 3)
-  );
+  mesh.geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+  mesh.userData.heat = heat;
 }
 
 const loader = new GLTFLoader();
 loader.load('/models/map.glb', (gltf) => {
   objects.gltfModel = gltf.scene;
 
-  gltf.scene.traverse((child) => {
-    if (child.isMesh) {
-      child.material = new THREE.MeshStandardMaterial({
-        color: 0xffffff,
-        vertexColors: true,
-        roughness: 0.1,
-        metalness: 0.1
-      });
-      initVertexColors(child);
-      child.castShadow = true;
-      child.receiveShadow = true;
-    }
+  gltf.scene.traverse(child => {
+    if (!child.isMesh) return;
+
+    child.material = new THREE.MeshStandardMaterial({
+      vertexColors: true,
+      roughness: 0.1,
+      metalness: 0.1
+    });
+
+    initVertexData(child);
   });
 
   scene.add(gltf.scene);
 });
 
 /* ---------------------------------------------------- */
-/* LOAD CSV POINT CLOUDS + MARKERS                      */
+/* LOAD CSV POINT CLOUDS                                */
 /* ---------------------------------------------------- */
 const csvUrls = [
   '/csv/P1_S2_CHART.csv','/csv/P1_S4_CHART.csv','/csv/P2_S1A_CHART.csv',
@@ -140,14 +115,6 @@ async function loadCSVs() {
     pc.scale.set(0.01, 0.01, 0.01);
     scene.add(pc);
     objects.pointClouds.push(pc);
-
-    const marker = new THREE.Mesh(
-      new THREE.SphereGeometry(2, 16, 16),
-      new THREE.MeshBasicMaterial({ color: 'black' })
-    );
-    marker.visible = false;
-    scene.add(marker);
-    pc.userData.marker = marker;
   }
 }
 loadCSVs();
@@ -165,8 +132,7 @@ async function initPlayback() {
   }
 
   for (let pc of objects.pointClouds) {
-    const c = pc.geometry.attributes.position.count;
-    longestCSV = Math.max(longestCSV, c);
+    longestCSV = Math.max(longestCSV, pc.geometry.attributes.position.count);
   }
 
   const f = pane.addFolder({ title: 'Playback' });
@@ -179,59 +145,56 @@ async function initPlayback() {
 initPlayback();
 
 /* ---------------------------------------------------- */
-/* HEAT MAP LOGIC                                       */
+/* HEAT FUNCTIONS                                       */
 /* ---------------------------------------------------- */
 function heatColor(t) {
   return new THREE.Color().setHSL((1 - t) * 0.66, 1, 0.5);
 }
 
-function getActiveCSVPoints(frame) {
-  const pts = [];
+let lastHeatFrame = -1;
+
+function updateHeatCumulative(frame) {
+  if (!objects.gltfModel) return;
+
+  const RADIUS = 50;
+  const R2 = RADIUS * RADIUS;
 
   for (let pc of objects.pointClouds) {
     const pos = pc.geometry.attributes.position;
     const idx = Math.min(frame, pos.count - 1);
 
-    pts.push(new THREE.Vector3(
-      pos.array[idx * 3 + 0] * 0.01,
-      pos.array[idx * 3 + 1] * 0.01,
-      pos.array[idx * 3 + 2] * 0.01
-    ));
-  }
-  return pts;
-}
+    const px = pos.array[idx * 3] * 0.01;
+    const py = pos.array[idx * 3 + 1] * 0.01;
+    const pz = pos.array[idx * 3 + 2] * 0.01;
 
-function applyHeat(frame) {
-  if (!objects.gltfModel) return;
+    objects.gltfModel.traverse(mesh => {
+      if (!mesh.isMesh) return;
 
-  const pts = getActiveCSVPoints(frame);
-  const RADIUS = 50;
+      const gPos = mesh.geometry.attributes.position;
+      const heat = mesh.userData.heat;
+      const col = mesh.geometry.attributes.color;
 
-  objects.gltfModel.traverse(mesh => {
-    if (!mesh.isMesh) return;
+      for (let i = 0; i < gPos.count; i++) {
+        const dx = gPos.array[i*3]   - px;
+        const dy = gPos.array[i*3+1] - py;
+        const dz = gPos.array[i*3+2] - pz;
+        const d2 = dx*dx + dy*dy + dz*dz;
 
-    const pos = mesh.geometry.attributes.position;
-    const col = mesh.geometry.attributes.color;
+        if (d2 < R2) {
+          heat[i] += 1 - d2 / R2;
+        }
 
-    for (let i = 0; i < pos.count; i++) {
-      let minD = Infinity;
+        const t = Math.min(1, heat[i]);
+        const c = heatColor(t);
 
-      for (let p of pts) {
-        const dx = pos.array[i * 3 + 0] - p.x;
-        const dy = pos.array[i * 3 + 1] - p.y;
-        const dz = pos.array[i * 3 + 2] - p.z;
-        minD = Math.min(minD, Math.sqrt(dx*dx + dy*dy + dz*dz));
+        col.array[i*3]   = c.r;
+        col.array[i*3+1] = c.g;
+        col.array[i*3+2] = c.b;
       }
 
-      const heat = Math.max(0, 1 - minD / RADIUS);
-      const c = heatColor(heat);
-
-      col.array[i * 3 + 0] = c.r;
-      col.array[i * 3 + 1] = c.g;
-      col.array[i * 3 + 2] = c.b;
-    }
-    col.needsUpdate = true;
-  });
+      col.needsUpdate = true;
+    });
+  }
 }
 
 /* ---------------------------------------------------- */
@@ -247,25 +210,15 @@ function animate() {
       pane.refresh();
     }
 
-    for (let pc of objects.pointClouds) {
-      const count = pc.geometry.attributes.position.count;
-      const f = Math.min(playback.frame, count);
-      pc.geometry.setDrawRange(0, f);
-
-      const marker = pc.userData.marker;
-      if (marker && f > 0) {
-        const i = Math.min(f - 1, count - 1);
-        const p = pc.geometry.attributes.position.array;
-        marker.position.set(
-          p[i*3] * 0.01,
-          p[i*3+1] * 0.01,
-          p[i*3+2] * 0.01
-        );
-        marker.visible = true;
-      }
+    const f = Math.floor(playback.frame);
+    if (f !== lastHeatFrame) {
+      updateHeatCumulative(f);
+      lastHeatFrame = f;
     }
 
-    applyHeat(Math.floor(playback.frame));
+    for (let pc of objects.pointClouds) {
+      pc.geometry.setDrawRange(0, Math.min(f, pc.geometry.attributes.position.count));
+    }
   }
 
   controls.update();
@@ -274,10 +227,6 @@ function animate() {
   requestAnimationFrame(animate);
 }
 animate();
-
-
-
-
 
 /* ---------------------------------------------------- */
 /* RESIZE                                               */
