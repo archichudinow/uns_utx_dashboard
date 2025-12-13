@@ -49,6 +49,11 @@ controls.target.set(0, 0, -250);
 /* ---------------------------------------------------- */
 const pane = new Pane();
 
+const settings = {
+  showHeat: true,
+  showGLTF: true
+};
+
 /* ---------------------------------------------------- */
 /* STORAGE                                              */
 /* ---------------------------------------------------- */
@@ -69,9 +74,8 @@ function initVertexData(mesh) {
   const colors = new Float32Array(pos.count * 3);
   const heat = new Float32Array(pos.count);
 
-  // start blue
   for (let i = 0; i < pos.count; i++) {
-    colors[i * 3 + 2] = 1;
+    colors[i * 3 + 2] = 1; // blue base
   }
 
   mesh.geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
@@ -87,6 +91,7 @@ loader.load('/models/map.glb', (gltf) => {
 
     child.material = new THREE.MeshStandardMaterial({
       vertexColors: true,
+      color: 0xffffff,
       roughness: 0.1,
       metalness: 0.1
     });
@@ -98,7 +103,7 @@ loader.load('/models/map.glb', (gltf) => {
 });
 
 /* ---------------------------------------------------- */
-/* LOAD CSV POINT CLOUDS                                */
+/* LOAD CSV POINT CLOUDS + AGENT MARKERS                 */
 /* ---------------------------------------------------- */
 const csvUrls = [
   '/csv/P1_S2_CHART.csv','/csv/P1_S4_CHART.csv','/csv/P2_S1A_CHART.csv',
@@ -107,6 +112,9 @@ const csvUrls = [
   '/csv/P3_S4_CHART.csv'
 ];
 
+const markerGeo = new THREE.SphereGeometry(2, 16, 16);
+const markerMat = new THREE.MeshBasicMaterial({ color: 'black' });
+
 async function loadCSVs() {
   for (let url of csvUrls) {
     const pc = await loadCSV(url);
@@ -114,6 +122,12 @@ async function loadCSVs() {
 
     pc.scale.set(0.01, 0.01, 0.01);
     scene.add(pc);
+
+    const marker = new THREE.Mesh(markerGeo, markerMat);
+    marker.visible = false;
+    scene.add(marker);
+
+    pc.userData.marker = marker;
     objects.pointClouds.push(pc);
   }
 }
@@ -140,6 +154,10 @@ async function initPlayback() {
   f.addBinding(playback, 'playing');
   f.addBinding(playback, 'speed', { min: 1, max: 60 });
 
+  const v = pane.addFolder({ title: 'View' });
+  v.addBinding(settings, 'showHeat', { label: 'Show Heatmap' });
+  v.addBinding(settings, 'showGLTF', { label: 'Show GLTF' });
+
   ready = true;
 }
 initPlayback();
@@ -154,7 +172,7 @@ function heatColor(t) {
 let lastHeatFrame = -1;
 
 function updateHeatCumulative(frame) {
-  if (!objects.gltfModel) return;
+  if (!objects.gltfModel || !settings.showHeat) return;
 
   const RADIUS = 50;
   const R2 = RADIUS * RADIUS;
@@ -198,6 +216,25 @@ function updateHeatCumulative(frame) {
 }
 
 /* ---------------------------------------------------- */
+/* RESET TO WHITE (WHEN HEAT OFF)                       */
+/* ---------------------------------------------------- */
+function resetMeshWhite() {
+  if (!objects.gltfModel) return;
+
+  objects.gltfModel.traverse(mesh => {
+    if (!mesh.isMesh) return;
+
+    const col = mesh.geometry.attributes.color;
+    for (let i = 0; i < col.count; i++) {
+      col.array[i*3] = 1;
+      col.array[i*3+1] = 1;
+      col.array[i*3+2] = 1;
+    }
+    col.needsUpdate = true;
+  });
+}
+
+/* ---------------------------------------------------- */
 /* RENDER LOOP                                          */
 /* ---------------------------------------------------- */
 function animate() {
@@ -211,13 +248,40 @@ function animate() {
     }
 
     const f = Math.floor(playback.frame);
-    if (f !== lastHeatFrame) {
-      updateHeatCumulative(f);
-      lastHeatFrame = f;
+
+    if (settings.showHeat) {
+      if (f !== lastHeatFrame) {
+        updateHeatCumulative(f);
+        lastHeatFrame = f;
+      }
+    } else {
+      resetMeshWhite();
+      lastHeatFrame = -1;
+    }
+
+    if (objects.gltfModel) {
+      objects.gltfModel.visible = settings.showGLTF;
     }
 
     for (let pc of objects.pointClouds) {
-      pc.geometry.setDrawRange(0, Math.min(f, pc.geometry.attributes.position.count));
+      const count = pc.geometry.attributes.position.count;
+      const draw = Math.min(f, count);
+      pc.geometry.setDrawRange(0, draw);
+
+      const marker = pc.userData.marker;
+      if (draw > 0) {
+        const i = Math.min(draw - 1, count - 1);
+        const p = pc.geometry.attributes.position.array;
+
+        marker.position.set(
+          p[i*3] * 0.01,
+          p[i*3+1] * 0.01,
+          p[i*3+2] * 0.01
+        );
+        marker.visible = true;
+      } else {
+        marker.visible = false;
+      }
     }
   }
 
