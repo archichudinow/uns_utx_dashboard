@@ -3,6 +3,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import { EffectComposer } from 'three/examples/jsm/postprocessing/EffectComposer.js';
 import { RenderPass } from 'three/examples/jsm/postprocessing/RenderPass.js';
+import { SAOPass } from 'three/examples/jsm/postprocessing/SAOPass.js';
 
 import { loadCSV } from './scripts/csv_to_points.js';
 import { Pane } from 'tweakpane';
@@ -18,23 +19,32 @@ const scene = new THREE.Scene();
 scene.background = new THREE.Color('white');
 
 /* ---------------- LIGHTS --------------------------- */
-scene.add(new THREE.AmbientLight(0xffffff, 2));
+scene.add(new THREE.AmbientLight(0xffffff, 3));
 
-const dirLight = new THREE.DirectionalLight(0xffffff, 1);
-dirLight.position.set(500, 1000, -700);
+const dirLight = new THREE.DirectionalLight(0xffffff, 2);
+dirLight.position.set(1000, 1500, 1000);
 dirLight.castShadow = true;
-dirLight.shadow.mapSize.width = 2048;
-dirLight.shadow.mapSize.height = 2048;
-dirLight.shadow.radius = 4;
-dirLight.shadow.bias = -0.0001;
+dirLight.shadow.mapSize.width = 12000; // high res for sharp shadows
+dirLight.shadow.mapSize.height = 12000;
+dirLight.shadow.radius = 0;           // sharp shadows
+dirLight.shadow.bias = -0.00001;
+
+dirLight.target.position.set(0, 0, 0);
+dirLight.shadow.camera.left = -1000;
+dirLight.shadow.camera.right = 1000;
+dirLight.shadow.camera.top = 1000;
+dirLight.shadow.camera.bottom = -1000;
+dirLight.shadow.camera.near = 0.5;
+dirLight.shadow.camera.far = 3000;
 scene.add(dirLight);
+scene.add(dirLight.target);
 
 /* ---------------- GROUND --------------------------- */
 const groundGeo = new THREE.PlaneGeometry(5000, 5000);
-const groundMat = new THREE.ShadowMaterial({ opacity: 0.2 });
+const groundMat = new THREE.ShadowMaterial({ opacity: 0.2 }); // 20% shadow overlay
 const ground = new THREE.Mesh(groundGeo, groundMat);
 ground.rotation.x = -Math.PI / 2;
-ground.position.y = -2;
+ground.position.y = -0.6;
 ground.receiveShadow = true;
 scene.add(ground);
 
@@ -47,10 +57,25 @@ const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true 
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.shadowMap.type = THREE.PCFShadowMap;
 
 const composer = new EffectComposer(renderer);
 composer.addPass(new RenderPass(scene, camera));
+
+const saoPass = new SAOPass(scene, camera, false, true);
+saoPass.params.saoBias = 1;
+saoPass.params.saoIntensity = 0.7;
+saoPass.params.saoScale = 5000;
+saoPass.params.saoKernelRadius = 3;      // lower kernel
+saoPass.params.saoMinResolution = 0;   // render at lower res
+saoPass.params.saoBlur = true;
+saoPass.params.saoBlurRadius = 0.1;
+saoPass.params.saoBlurStdDev = 1;        // lighter blur
+saoPass.params.saoBlurDepthCutoff = 0.1;
+saoPass.camera.layers.set(0);
+
+// Add to composer
+composer.addPass(saoPass);
 
 /* ---------------- CONTROLS ------------------------- */
 const controls = new OrbitControls(camera, canvas);
@@ -79,14 +104,11 @@ const objects = {
   gltfModel: null,
   whiteMaterial: null,
   heatMeshes: [],
+  shadowMeshes: [],
   pointClouds: []
 };
 
 /* ---------------- SPATIAL GRID OPTIMIZATION --------- */
-/**
- * Use integer-keyed Map instead of string keys
- * Key = x + y*10000 + z*100000000 (assumes grid <10k in each direction)
- */
 function buildSpatialGrid(mesh, cellSize) {
   const { vx, vy, vz } = mesh.userData;
   const grid = new Map();
@@ -104,10 +126,10 @@ function buildSpatialGrid(mesh, cellSize) {
 
 /* ---------------- INIT HEAT MESH ------------------ */
 function initHeatMesh(originalMesh) {
+  // heatmap mesh (transparent)
   const mesh = new THREE.Mesh(originalMesh.geometry.clone(), new THREE.MeshStandardMaterial({
     vertexColors: true,
     roughness: 0.1,
-    metalness: 0.1,
     transparent: true,
     opacity: 1,
     depthWrite: false
@@ -133,18 +155,33 @@ function initHeatMesh(originalMesh) {
     colors[i*4] = 1;
     colors[i*4+1] = 1;
     colors[i*4+2] = 1;
-    colors[i*4+3] = 0.1;
+    colors[i*4+3] = 0.0; // start low opacity
   }
 
   mesh.geometry.setAttribute('color', new THREE.BufferAttribute(colors, 4));
   mesh.userData = { heat, vx, vy, vz, dirty: new Set(), worldBS: mesh.geometry.boundingSphere.clone() };
   buildSpatialGrid(mesh, HEAT_PARAMS.radius);
 
-  mesh.castShadow = false;
+  mesh.castShadow = false; // transparent heatmap does not cast shadow
   mesh.receiveShadow = false;
 
   scene.add(mesh);
   objects.heatMeshes.push(mesh);
+
+  // shadow-only mesh for both self-shadow and drop shadows
+  const shadowMesh = new THREE.Mesh(originalMesh.geometry.clone(), new THREE.MeshStandardMaterial({
+    color: 0xffffff,
+    roughness: 0.1,
+    opacity: 0.0,  // invisible
+    transparent: true
+  }));
+  shadowMesh.castShadow = true;
+  shadowMesh.receiveShadow = false;
+  shadowMesh.position.copy(originalMesh.position);
+  shadowMesh.rotation.copy(originalMesh.rotation);
+  shadowMesh.scale.copy(originalMesh.scale);
+  scene.add(shadowMesh);
+  objects.shadowMeshes.push(shadowMesh);
 }
 
 /* ---------------- LOAD GLTF ------------------------ */
@@ -295,7 +332,7 @@ function updateHeat(frame){
       col[i*4] = 0.1 + c.r*0.9;
       col[i*4+1] = 0.1 + c.g*0.9;
       col[i*4+2] = 0.1 + c.b*0.9;
-      col[i*4+3] = 0.1 + 0.9*t;
+      col[i*4+3] = 0.0 + 0.8*t; // min 20% opacity for shadow overlay
     });
     mesh.geometry.attributes.color.needsUpdate = true;
     dirty.clear();
@@ -321,11 +358,15 @@ function animate(time){
     }
 
     const f = Math.floor(playback.frame);
+
+    // toggle visibility
     objects.gltfModel && (objects.gltfModel.visible = settings.showGLTF || !settings.showHeat);
     objects.heatMeshes.forEach(mesh => mesh.visible=settings.showHeat);
+    objects.shadowMeshes.forEach(mesh => mesh.visible=true); // always render shadow layer
 
     if(settings.showHeat && playback.playing) updateHeat(f);
 
+    // point cloud update
     for(const pc of objects.pointClouds){
       const count = pc.geometry.attributes.position.count;
       const drawCount = Math.min(f+1,count);
