@@ -42,10 +42,11 @@ function parseCSVToPoints(csvData) {
 
     const material = new THREE.PointsMaterial({
         size: 1,
-        vertexColors: true,
+        vertexColors: false,  // we just want black
+        color: 0x000000,      // black points
         sizeAttenuation: false,
-        depthWrite: false,
-        transparent: true, // this helps AO skip it
+        depthWrite: false,     // ignore for AO / depth
+        transparent: true,    // still visible
     });
 
     const pointCloud = new THREE.Points(geometry, material);
@@ -55,7 +56,7 @@ function parseCSVToPoints(csvData) {
     pointCloud.receiveShadow = false;
 
     // Assign to a separate layer (e.g., layer 2) so SAOPass ignores it
-    pointCloud.layers.set(2);
+    pointCloud.layers.set(0);
 
     return pointCloud;
 }

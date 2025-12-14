@@ -72,7 +72,7 @@ saoPass.params.saoBlur = true;
 saoPass.params.saoBlurRadius = 0.1;
 saoPass.params.saoBlurStdDev = 1;        // lighter blur
 saoPass.params.saoBlurDepthCutoff = 0.1;
-saoPass.camera.layers.set(0);
+//saoPass.camera.layers.set(0);
 
 // Add to composer
 composer.addPass(saoPass);
