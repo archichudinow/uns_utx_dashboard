@@ -72,6 +72,7 @@ const HEAT_PARAMS = {
   max: 4,
   falloff: 4
 };
+let invHeatRange = 1 / (HEAT_PARAMS.max - HEAT_PARAMS.min);
 
 /* ---------------- STORAGE -------------------------- */
 const objects = {
@@ -81,12 +82,19 @@ const objects = {
   pointClouds: []
 };
 
-/* ---------------- SPATIAL GRID --------------------- */
+/* ---------------- SPATIAL GRID OPTIMIZATION --------- */
+/**
+ * Use integer-keyed Map instead of string keys
+ * Key = x + y*10000 + z*100000000 (assumes grid <10k in each direction)
+ */
 function buildSpatialGrid(mesh, cellSize) {
   const { vx, vy, vz } = mesh.userData;
   const grid = new Map();
   for (let i = 0; i < vx.length; i++) {
-    const key = `${(vx[i]/cellSize)|0},${(vy[i]/cellSize)|0},${(vz[i]/cellSize)|0}`;
+    const gx = Math.floor(vx[i] / cellSize);
+    const gy = Math.floor(vy[i] / cellSize);
+    const gz = Math.floor(vz[i] / cellSize);
+    const key = gx + gy*10000 + gz*100000000;
     if (!grid.has(key)) grid.set(key, []);
     grid.get(key).push(i);
   }
@@ -120,7 +128,7 @@ function initHeatMesh(originalMesh) {
 
   for (let i = 0; i < count; i++) {
     v.set(pos.array[i*3], pos.array[i*3+1], pos.array[i*3+2]).applyMatrix4(m);
-    vx[i]=v.x; vy[i]=v.y; vz[i]=v.z;
+    vx[i] = v.x; vy[i] = v.y; vz[i] = v.z;
 
     colors[i*4] = 1;
     colors[i*4+1] = 1;
@@ -210,6 +218,7 @@ async function initPlayback(){
   fHeat.addBinding(HEAT_PARAMS,'min',{min:0,max:2});
   fHeat.addBinding(HEAT_PARAMS,'max',{min:0.1,max:5});
 
+  invHeatRange = 1 / (HEAT_PARAMS.max - HEAT_PARAMS.min);
   ready=true;
 }
 initPlayback();
@@ -240,28 +249,32 @@ function updateHeat(frame){
   for(const pc of objects.pointClouds){
     const pos=pc.geometry.attributes.position;
     const idx=Math.min(frame,pos.count-1);
-    const px=pos.array[idx*3]*0.01;
-    const py=pos.array[idx*3+1]*0.01;
-    const pz=pos.array[idx*3+2]*0.01;
+    tmpVec.set(
+      pos.array[idx*3]*0.01,
+      pos.array[idx*3+1]*0.01,
+      pos.array[idx*3+2]*0.01
+    );
 
     for(const mesh of objects.heatMeshes){
       const {worldBS,grid,cellSize,heat,dirty,vx,vy,vz} = mesh.userData;
-      const dx=worldBS.center.x-px, dy=worldBS.center.y-py, dz=worldBS.center.z-pz;
-      if(dx*dx+dy*dy+dz*dz>(worldBS.radius+HEAT_PARAMS.radius)**2) continue;
+      if(tmpVec.distanceToSquared(worldBS.center) > (worldBS.radius+HEAT_PARAMS.radius)**2) continue;
 
-      const gx=(px/cellSize)|0, gy=(py/cellSize)|0, gz=(pz/cellSize)|0;
+      const gx=Math.floor(tmpVec.x/cellSize);
+      const gy=Math.floor(tmpVec.y/cellSize);
+      const gz=Math.floor(tmpVec.z/cellSize);
 
       for(let ix=-1;ix<=1;ix++)
       for(let iy=-1;iy<=1;iy++)
       for(let iz=-1;iz<=1;iz++){
-        const list=grid.get(`${gx+ix},${gy+iy},${gz+iz}`);
+        const key = (gx+ix) + (gy+iy)*10000 + (gz+iz)*100000000;
+        const list = grid.get(key);
         if(!list) continue;
         for(const i of list){
-          const dx=vx[i]-px, dy=vy[i]-py, dz=vz[i]-pz;
-          const d2 = dx*dx+dy*dy+dz*dz;
+          const dx=vx[i]-tmpVec.x, dy=vy[i]-tmpVec.y, dz=vz[i]-tmpVec.z;
+          const d2=dx*dx+dy*dy+dz*dz;
           if(d2<R2){
             const delta = Math.pow(1 - d2*invR2, HEAT_PARAMS.falloff) * HEAT_PARAMS.agentStrength;
-            if(delta>1e-6){ // only mark significant changes
+            if(delta>1e-6){
               heat[i]+=delta;
               dirty.add(i);
             }
@@ -273,22 +286,25 @@ function updateHeat(frame){
 
   for(const mesh of objects.heatMeshes){
     const col=mesh.geometry.attributes.color.array;
-    const heat=mesh.userData.heat;
-    mesh.userData.dirty.forEach(i=>{
-      const t=THREE.MathUtils.clamp((heat[i]-HEAT_PARAMS.min)/(HEAT_PARAMS.max-HEAT_PARAMS.min),0,1);
+    const {heat, dirty} = mesh.userData;
+    if(dirty.size===0) continue;
+
+    dirty.forEach(i=>{
+      const t=THREE.MathUtils.clamp((heat[i]-HEAT_PARAMS.min)*invHeatRange,0,1);
       const c=heatColor(t);
-      col[i*4]   = 0.1 + c.r*0.9;
+      col[i*4] = 0.1 + c.r*0.9;
       col[i*4+1] = 0.1 + c.g*0.9;
       col[i*4+2] = 0.1 + c.b*0.9;
       col[i*4+3] = 0.1 + 0.9*t;
     });
-    mesh.geometry.attributes.color.needsUpdate = mesh.userData.dirty.size > 0;
-    mesh.userData.dirty.clear();
+    mesh.geometry.attributes.color.needsUpdate = true;
+    dirty.clear();
   }
 }
 
 /* ---------------- RENDER LOOP ---------------------- */
-function animate(){
+let lastPaneRefresh = 0;
+function animate(time){
   stats.begin();
 
   if(ready){
@@ -298,31 +314,33 @@ function animate(){
         playback.frame = longestCSV - 1;
         playback.playing = false;
       }
-      pane.refresh();
+      if(time - lastPaneRefresh > 33){ // throttle to ~30fps
+        pane.refresh();
+        lastPaneRefresh = time;
+      }
     }
 
     const f = Math.floor(playback.frame);
-
-    if(objects.gltfModel) objects.gltfModel.visible = settings.showGLTF || !settings.showHeat;
-    objects.heatMeshes.forEach(mesh=>mesh.visible=settings.showHeat);
+    objects.gltfModel && (objects.gltfModel.visible = settings.showGLTF || !settings.showHeat);
+    objects.heatMeshes.forEach(mesh => mesh.visible=settings.showHeat);
 
     if(settings.showHeat && playback.playing) updateHeat(f);
 
     for(const pc of objects.pointClouds){
       const count = pc.geometry.attributes.position.count;
-      const drawCount = Math.min(f + 1, count);
+      const drawCount = Math.min(f+1,count);
       pc.geometry.setDrawRange(0, drawCount);
 
       const marker = pc.userData.marker;
-      if(drawCount > 0){
+      if(drawCount>0){
         const p = pc.geometry.attributes.position.array;
         marker.position.set(
           p[(drawCount-1)*3]*0.01,
           p[(drawCount-1)*3+1]*0.01,
           p[(drawCount-1)*3+2]*0.01
         );
-        marker.visible = true;
-      } else marker.visible = false;
+        marker.visible=true;
+      } else marker.visible=false;
     }
   }
 
