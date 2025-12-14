@@ -86,7 +86,7 @@ function buildSpatialGrid(mesh, cellSize) {
   const { vx, vy, vz } = mesh.userData;
   const grid = new Map();
   for (let i = 0; i < vx.length; i++) {
-    const key = `${Math.floor(vx[i] / cellSize)},${Math.floor(vy[i] / cellSize)},${Math.floor(vz[i] / cellSize)}`;
+    const key = `${(vx[i]/cellSize)|0},${(vy[i]/cellSize)|0},${(vz[i]/cellSize)|0}`;
     if (!grid.has(key)) grid.set(key, []);
     grid.get(key).push(i);
   }
@@ -102,14 +102,14 @@ function initHeatMesh(originalMesh) {
     metalness: 0.1,
     transparent: true,
     opacity: 1,
-    depthWrite: false, // ensures transparent mesh doesn't block shadows
+    depthWrite: false
   }));
 
   mesh.geometry.computeBoundingSphere();
 
   const pos = mesh.geometry.attributes.position;
   const count = pos.count;
-  const colors = new Float32Array(count * 4); // RGBA
+  const colors = new Float32Array(count * 4);
   const heat = new Float32Array(count);
   const vx = new Float32Array(count);
   const vy = new Float32Array(count);
@@ -122,7 +122,6 @@ function initHeatMesh(originalMesh) {
     v.set(pos.array[i*3], pos.array[i*3+1], pos.array[i*3+2]).applyMatrix4(m);
     vx[i]=v.x; vy[i]=v.y; vz[i]=v.z;
 
-    // White background with low opacity
     colors[i*4] = 1;
     colors[i*4+1] = 1;
     colors[i*4+2] = 1;
@@ -133,7 +132,7 @@ function initHeatMesh(originalMesh) {
   mesh.userData = { heat, vx, vy, vz, dirty: new Set(), worldBS: mesh.geometry.boundingSphere.clone() };
   buildSpatialGrid(mesh, HEAT_PARAMS.radius);
 
-  mesh.castShadow = false;   // Important: heat meshes do NOT cast shadows
+  mesh.castShadow = false;
   mesh.receiveShadow = false;
 
   scene.add(mesh);
@@ -144,17 +143,13 @@ function initHeatMesh(originalMesh) {
 const loader = new GLTFLoader();
 loader.load('/models/map_high.glb', gltf => {
   objects.gltfModel = gltf.scene;
-
-  // Opaque material for shadows
   objects.whiteMaterial = new THREE.MeshStandardMaterial({ color: 'white', roughness: 0.1, metalness: 0.1 });
 
   gltf.scene.traverse(o => {
     if (o.isMesh) {
-      o.material = objects.whiteMaterial; // ensures shadows work
+      o.material = objects.whiteMaterial;
       o.castShadow = true;
       o.receiveShadow = true;
-
-      // Create heat mesh copy separately
       initHeatMesh(o);
     }
   });
@@ -167,12 +162,14 @@ const markerGeo = new THREE.SphereGeometry(2,16,16);
 const markerMat = new THREE.MeshBasicMaterial({color:'black'});
 
 async function loadCSVs(){
-  for(const url of [
+  const urls = [
     '/csv/P1_S2_CHART.csv','/csv/P1_S4_CHART.csv','/csv/P2_S1A_CHART.csv',
     '/csv/P2_S2_CHART.csv','/csv/P2_S3_CHART.csv','/csv/P2_S4_CHART.csv',
     '/csv/P3_S1A_CHART.csv','/csv/P3_S2_CHART.csv','/csv/P3_S3_CHART.csv',
     '/csv/P3_S4_CHART.csv'
-  ]) {
+  ];
+
+  for(const url of urls) {
     const pc = await loadCSV(url);
     if(!pc) continue;
     pc.scale.setScalar(0.01);
@@ -218,27 +215,27 @@ async function initPlayback(){
 initPlayback();
 
 /* ---------------- HEAT COLOR ----------------------- */
-function heatColor(t) {
-    const c = new THREE.Color();
+const heatColor = (() => {
+  const c = new THREE.Color();
+  return t => {
     if (t < 0.25) {
-        const f = t / 0.25;
-        c.setRGB(1 - f, 1, 1);
+      const f = t / 0.25; c.setRGB(1 - f, 1, 1);
     } else if (t < 0.5) {
-        const f = (t - 0.25) / 0.25;
-        c.setRGB(0, 1, 1 - f);
+      const f = (t - 0.25) / 0.25; c.setRGB(0, 1, 1 - f);
     } else if (t < 0.75) {
-        const f = (t - 0.5) / 0.25;
-        c.setRGB(f, 1, 0);
+      const f = (t - 0.5) / 0.25; c.setRGB(f, 1, 0);
     } else {
-        const f = (t - 0.75) / 0.25;
-        c.setRGB(1, 1 - f, 0);
+      const f = (t - 0.75) / 0.25; c.setRGB(1, 1 - f, 0);
     }
     return c;
-}
+  };
+})();
 
 /* ---------------- HEAT UPDATE ---------------------- */
+const tmpVec = new THREE.Vector3();
 function updateHeat(frame){
-  const R2 = HEAT_PARAMS.radius**2;
+  const R2 = HEAT_PARAMS.radius*HEAT_PARAMS.radius;
+  const invR2 = 1 / R2;
 
   for(const pc of objects.pointClouds){
     const pos=pc.geometry.attributes.position;
@@ -248,11 +245,11 @@ function updateHeat(frame){
     const pz=pos.array[idx*3+2]*0.01;
 
     for(const mesh of objects.heatMeshes){
-      const {worldBS,grid,cellSize,heat,dirty,vx,vy,vz}=mesh.userData;
+      const {worldBS,grid,cellSize,heat,dirty,vx,vy,vz} = mesh.userData;
       const dx=worldBS.center.x-px, dy=worldBS.center.y-py, dz=worldBS.center.z-pz;
       if(dx*dx+dy*dy+dz*dz>(worldBS.radius+HEAT_PARAMS.radius)**2) continue;
 
-      const gx=Math.floor(px/cellSize), gy=Math.floor(py/cellSize), gz=Math.floor(pz/cellSize);
+      const gx=(px/cellSize)|0, gy=(py/cellSize)|0, gz=(pz/cellSize)|0;
 
       for(let ix=-1;ix<=1;ix++)
       for(let iy=-1;iy<=1;iy++)
@@ -261,10 +258,13 @@ function updateHeat(frame){
         if(!list) continue;
         for(const i of list){
           const dx=vx[i]-px, dy=vy[i]-py, dz=vz[i]-pz;
-          const d2=dx*dx+dy*dy+dz*dz;
+          const d2 = dx*dx+dy*dy+dz*dz;
           if(d2<R2){
-            heat[i]+=Math.pow(1-d2/R2,HEAT_PARAMS.falloff)*HEAT_PARAMS.agentStrength;
-            dirty.add(i);
+            const delta = Math.pow(1 - d2*invR2, HEAT_PARAMS.falloff) * HEAT_PARAMS.agentStrength;
+            if(delta>1e-6){ // only mark significant changes
+              heat[i]+=delta;
+              dirty.add(i);
+            }
           }
         }
       }
@@ -274,16 +274,15 @@ function updateHeat(frame){
   for(const mesh of objects.heatMeshes){
     const col=mesh.geometry.attributes.color.array;
     const heat=mesh.userData.heat;
-    for(const i of mesh.userData.dirty){
+    mesh.userData.dirty.forEach(i=>{
       const t=THREE.MathUtils.clamp((heat[i]-HEAT_PARAMS.min)/(HEAT_PARAMS.max-HEAT_PARAMS.min),0,1);
       const c=heatColor(t);
-
-      col[i*4]   = 1 * 0.1 + c.r * 0.9;
-      col[i*4+1] = 1 * 0.1 + c.g * 0.9;
-      col[i*4+2] = 1 * 0.1 + c.b * 0.9;
-      col[i*4+3] = 0.1 + 0.9 * t;
-    }
-    mesh.geometry.attributes.color.needsUpdate=true;
+      col[i*4]   = 0.1 + c.r*0.9;
+      col[i*4+1] = 0.1 + c.g*0.9;
+      col[i*4+2] = 0.1 + c.b*0.9;
+      col[i*4+3] = 0.1 + 0.9*t;
+    });
+    mesh.geometry.attributes.color.needsUpdate = mesh.userData.dirty.size > 0;
     mesh.userData.dirty.clear();
   }
 }
@@ -304,13 +303,8 @@ function animate(){
 
     const f = Math.floor(playback.frame);
 
-    // Visibility toggle
-    if(objects.gltfModel){
-      objects.gltfModel.visible = settings.showGLTF || !settings.showHeat;
-    }
-    for (const mesh of objects.heatMeshes) {
-        mesh.visible = settings.showHeat;
-    }
+    if(objects.gltfModel) objects.gltfModel.visible = settings.showGLTF || !settings.showHeat;
+    objects.heatMeshes.forEach(mesh=>mesh.visible=settings.showHeat);
 
     if(settings.showHeat && playback.playing) updateHeat(f);
 
