@@ -16,7 +16,7 @@ const stats = new Stats();
 document.body.appendChild(stats.dom);
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color('white');
+scene.background = new THREE.Color('#e0d9ce');
 
 /* ---------------- LIGHTS --------------------------- */
 scene.add(new THREE.AmbientLight(0xffffff, 3));
@@ -24,8 +24,8 @@ scene.add(new THREE.AmbientLight(0xffffff, 3));
 const dirLight = new THREE.DirectionalLight(0xffffff, 2);
 dirLight.position.set(1000, 1500, 1000);
 dirLight.castShadow = true;
-dirLight.shadow.mapSize.width = 4096; // high res for sharp shadows
-dirLight.shadow.mapSize.height = 4096;
+dirLight.shadow.mapSize.width = 8192; // high res for sharp shadows
+dirLight.shadow.mapSize.height = 8192;
 dirLight.shadow.radius = 0;           // sharp shadows
 dirLight.shadow.bias = -0.00001;
 
@@ -72,7 +72,7 @@ saoPass.params.saoBlur = true;
 saoPass.params.saoBlurRadius = 0.1;
 saoPass.params.saoBlurStdDev = 1;        // lighter blur
 saoPass.params.saoBlurDepthCutoff = 0.1;
-//saoPass.camera.layers.set(0);
+saoPass.camera.layers.set(0);
 
 // Add to composer
 //composer.addPass(saoPass);
