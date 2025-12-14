@@ -75,7 +75,7 @@ saoPass.params.saoBlurDepthCutoff = 0.1;
 //saoPass.camera.layers.set(0);
 
 // Add to composer
-composer.addPass(saoPass);
+//composer.addPass(saoPass);
 
 /* ---------------- CONTROLS ------------------------- */
 const controls = new OrbitControls(camera, canvas);
