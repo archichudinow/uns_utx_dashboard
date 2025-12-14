@@ -155,7 +155,7 @@ function initHeatMesh(originalMesh) {
     colors[i*4] = 1;
     colors[i*4+1] = 1;
     colors[i*4+2] = 1;
-    colors[i*4+3] = 0.0; // start low opacity
+    colors[i*4+3] = 0.2; // start low opacity
   }
 
   mesh.geometry.setAttribute('color', new THREE.BufferAttribute(colors, 4));
@@ -231,7 +231,7 @@ async function loadCSVs(){
 loadCSVs();
 
 /* ---------------- PLAYBACK ------------------------- */
-const playback={frame:0,playing:false,speed:1};
+const playback={frame:0,playing:false,speed:5};
 let longestCSV=0;
 let ready=false;
 
@@ -242,18 +242,10 @@ async function initPlayback(){
   const fPlayback=pane.addFolder({title:'Playback'});
   fPlayback.addBinding(playback,'frame',{min:0,max:longestCSV,step:1});
   fPlayback.addBinding(playback,'playing');
-  fPlayback.addBinding(playback,'speed',{min:10,max:60});
 
   const fView=pane.addFolder({title:'View'});
   fView.addBinding(settings,'showHeat');
   fView.addBinding(settings,'showGLTF');
-
-  const fHeat=pane.addFolder({title:'Heatmap'});
-  fHeat.addBinding(HEAT_PARAMS,'radius',{min:1,max:50,step:1});
-  fHeat.addBinding(HEAT_PARAMS,'agentStrength',{min:0.001,max:0.5});
-  fHeat.addBinding(HEAT_PARAMS,'falloff',{min:1,max:8,step:1});
-  fHeat.addBinding(HEAT_PARAMS,'min',{min:0,max:2});
-  fHeat.addBinding(HEAT_PARAMS,'max',{min:0.1,max:5});
 
   invHeatRange = 1 / (HEAT_PARAMS.max - HEAT_PARAMS.min);
   ready=true;
