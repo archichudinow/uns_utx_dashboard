@@ -24,8 +24,8 @@ scene.add(new THREE.AmbientLight(0xffffff, 3));
 const dirLight = new THREE.DirectionalLight(0xffffff, 2);
 dirLight.position.set(1000, 1500, 1000);
 dirLight.castShadow = true;
-dirLight.shadow.mapSize.width = 12000; // high res for sharp shadows
-dirLight.shadow.mapSize.height = 12000;
+dirLight.shadow.mapSize.width = 4096; // high res for sharp shadows
+dirLight.shadow.mapSize.height = 4096;
 dirLight.shadow.radius = 0;           // sharp shadows
 dirLight.shadow.bias = -0.00001;
 
