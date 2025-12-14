@@ -17,318 +17,318 @@ document.body.appendChild(stats.dom);
 const scene = new THREE.Scene();
 scene.background = new THREE.Color('white');
 
-scene.add(new THREE.AmbientLight(0xffffff, 2.5));
+/* ---------------- LIGHTS --------------------------- */
+scene.add(new THREE.AmbientLight(0xffffff, 2));
+
 const dirLight = new THREE.DirectionalLight(0xffffff, 1);
 dirLight.position.set(500, 1000, -700);
+dirLight.castShadow = true;
+dirLight.shadow.mapSize.width = 2048;
+dirLight.shadow.mapSize.height = 2048;
+dirLight.shadow.radius = 4;
+dirLight.shadow.bias = -0.0001;
 scene.add(dirLight);
 
-/* ---------------------------------------------------- */
-/* CAMERA / RENDERER                                    */
-/* ---------------------------------------------------- */
+/* ---------------- GROUND --------------------------- */
+const groundGeo = new THREE.PlaneGeometry(5000, 5000);
+const groundMat = new THREE.ShadowMaterial({ opacity: 0.2 });
+const ground = new THREE.Mesh(groundGeo, groundMat);
+ground.rotation.x = -Math.PI / 2;
+ground.position.y = -2;
+ground.receiveShadow = true;
+scene.add(ground);
+
+/* ---------------- CAMERA / RENDERER ---------------- */
 const camera = new THREE.PerspectiveCamera(12, window.innerWidth / window.innerHeight, 1, 10000);
 camera.position.set(-400, 600, -1000);
 
 const canvas = document.querySelector('canvas.threejs');
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
 renderer.setSize(window.innerWidth, window.innerHeight);
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
 const composer = new EffectComposer(renderer);
 composer.addPass(new RenderPass(scene, camera));
 
-/* ---------------------------------------------------- */
-/* CONTROLS                                             */
-/* ---------------------------------------------------- */
+/* ---------------- CONTROLS ------------------------- */
 const controls = new OrbitControls(camera, canvas);
 controls.enableDamping = true;
 controls.target.set(0, 0, -250);
 
-/* ---------------------------------------------------- */
-/* UI                                                   */
-/* ---------------------------------------------------- */
+/* ---------------- UI ------------------------------- */
 const pane = new Pane();
-
 const settings = {
-  showHeat: true,
+  showHeat: false,
   showGLTF: true
 };
 
-/* ---------------------------------------------------- */
-/* HEAT PARAMETERS                                      */
-/* ---------------------------------------------------- */
+/* ---------------- HEAT PARAMETERS ------------------ */
 const HEAT_PARAMS = {
-  radius: 15,
-  agentStrength: 0.05,
+  radius: 4,
+  agentStrength: 0.4,
   min: 0,
-  max: 2,
+  max: 4,
   falloff: 4
 };
 
-/* ---------------------------------------------------- */
-/* STORAGE                                              */
-/* ---------------------------------------------------- */
+/* ---------------- STORAGE -------------------------- */
 const objects = {
   gltfModel: null,
-  meshes: [],
+  whiteMaterial: null,
+  heatMeshes: [],
   pointClouds: []
 };
 
-/* ---------------------------------------------------- */
-/* SPATIAL GRID BUILD                                   */
-/* ---------------------------------------------------- */
+/* ---------------- SPATIAL GRID --------------------- */
 function buildSpatialGrid(mesh, cellSize) {
-  const pos = mesh.geometry.attributes.position.array;
+  const { vx, vy, vz } = mesh.userData;
   const grid = new Map();
-
-  for (let i = 0; i < pos.length; i += 3) {
-    const gx = Math.floor(pos[i] / cellSize);
-    const gy = Math.floor(pos[i + 1] / cellSize);
-    const gz = Math.floor(pos[i + 2] / cellSize);
-
-    const key = `${gx},${gy},${gz}`;
+  for (let i = 0; i < vx.length; i++) {
+    const key = `${Math.floor(vx[i] / cellSize)},${Math.floor(vy[i] / cellSize)},${Math.floor(vz[i] / cellSize)}`;
     if (!grid.has(key)) grid.set(key, []);
-    grid.get(key).push(i / 3);
+    grid.get(key).push(i);
   }
-
   mesh.userData.grid = grid;
   mesh.userData.cellSize = cellSize;
 }
 
-/* ---------------------------------------------------- */
-/* INIT GLTF MESH DATA                                  */
-/* ---------------------------------------------------- */
-function initMesh(mesh) {
-  if (mesh.geometry.index) {
-    mesh.geometry = mesh.geometry.toNonIndexed();
-  }
+/* ---------------- INIT HEAT MESH ------------------ */
+function initHeatMesh(originalMesh) {
+  const mesh = new THREE.Mesh(originalMesh.geometry.clone(), new THREE.MeshStandardMaterial({
+    vertexColors: true,
+    roughness: 0.1,
+    metalness: 0.1,
+    transparent: true,
+    opacity: 1,
+    depthWrite: false, // ensures transparent mesh doesn't block shadows
+  }));
 
   mesh.geometry.computeBoundingSphere();
 
   const pos = mesh.geometry.attributes.position;
-  const colors = new Float32Array(pos.count * 3);
-  const heat = new Float32Array(pos.count);
+  const count = pos.count;
+  const colors = new Float32Array(count * 4); // RGBA
+  const heat = new Float32Array(count);
+  const vx = new Float32Array(count);
+  const vy = new Float32Array(count);
+  const vz = new Float32Array(count);
 
-  for (let i = 0; i < pos.count; i++) {
-    colors[i * 3 + 2] = 1;
+  const v = new THREE.Vector3();
+  const m = originalMesh.matrixWorld;
+
+  for (let i = 0; i < count; i++) {
+    v.set(pos.array[i*3], pos.array[i*3+1], pos.array[i*3+2]).applyMatrix4(m);
+    vx[i]=v.x; vy[i]=v.y; vz[i]=v.z;
+
+    // White background with low opacity
+    colors[i*4] = 1;
+    colors[i*4+1] = 1;
+    colors[i*4+2] = 1;
+    colors[i*4+3] = 0.1;
   }
 
-  mesh.geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-
-  mesh.material = new THREE.MeshStandardMaterial({
-    vertexColors: true,
-    roughness: 0.1,
-    metalness: 0.1
-  });
-
-  mesh.userData.heat = heat;
-  mesh.userData.dirty = new Set();
-
+  mesh.geometry.setAttribute('color', new THREE.BufferAttribute(colors, 4));
+  mesh.userData = { heat, vx, vy, vz, dirty: new Set(), worldBS: mesh.geometry.boundingSphere.clone() };
   buildSpatialGrid(mesh, HEAT_PARAMS.radius);
-  objects.meshes.push(mesh);
+
+  mesh.castShadow = false;   // Important: heat meshes do NOT cast shadows
+  mesh.receiveShadow = false;
+
+  scene.add(mesh);
+  objects.heatMeshes.push(mesh);
 }
 
-/* ---------------------------------------------------- */
-/* LOAD GLTF                                            */
-/* ---------------------------------------------------- */
+/* ---------------- LOAD GLTF ------------------------ */
 const loader = new GLTFLoader();
 loader.load('/models/map_high.glb', gltf => {
   objects.gltfModel = gltf.scene;
 
-  gltf.scene.traverse(obj => {
-    if (obj.isMesh) initMesh(obj);
+  // Opaque material for shadows
+  objects.whiteMaterial = new THREE.MeshStandardMaterial({ color: 'white', roughness: 0.1, metalness: 0.1 });
+
+  gltf.scene.traverse(o => {
+    if (o.isMesh) {
+      o.material = objects.whiteMaterial; // ensures shadows work
+      o.castShadow = true;
+      o.receiveShadow = true;
+
+      // Create heat mesh copy separately
+      initHeatMesh(o);
+    }
   });
 
   scene.add(gltf.scene);
 });
 
-/* ---------------------------------------------------- */
-/* LOAD CSV POINT CLOUDS                                */
-/* ---------------------------------------------------- */
-const csvUrls = [
-  '/csv/P1_S2_CHART.csv','/csv/P1_S4_CHART.csv','/csv/P2_S1A_CHART.csv',
-  '/csv/P2_S2_CHART.csv','/csv/P2_S3_CHART.csv','/csv/P2_S4_CHART.csv',
-  '/csv/P3_S1A_CHART.csv','/csv/P3_S2_CHART.csv','/csv/P3_S3_CHART.csv',
-  '/csv/P3_S4_CHART.csv'
-];
+/* ---------------- CSV LOAD ------------------------ */
+const markerGeo = new THREE.SphereGeometry(2,16,16);
+const markerMat = new THREE.MeshBasicMaterial({color:'black'});
 
-const markerGeo = new THREE.SphereGeometry(2, 16, 16);
-const markerMat = new THREE.MeshBasicMaterial({ color: 'black' });
-
-async function loadCSVs() {
-  for (const url of csvUrls) {
+async function loadCSVs(){
+  for(const url of [
+    '/csv/P1_S2_CHART.csv','/csv/P1_S4_CHART.csv','/csv/P2_S1A_CHART.csv',
+    '/csv/P2_S2_CHART.csv','/csv/P2_S3_CHART.csv','/csv/P2_S4_CHART.csv',
+    '/csv/P3_S1A_CHART.csv','/csv/P3_S2_CHART.csv','/csv/P3_S3_CHART.csv',
+    '/csv/P3_S4_CHART.csv'
+  ]) {
     const pc = await loadCSV(url);
-    if (!pc) continue;
-
-    pc.scale.set(0.01, 0.01, 0.01);
+    if(!pc) continue;
+    pc.scale.setScalar(0.01);
+    pc.geometry.setDrawRange(0,0);
     scene.add(pc);
 
     const marker = new THREE.Mesh(markerGeo, markerMat);
-    marker.visible = false;
+    marker.visible=false;
     scene.add(marker);
-
     pc.userData.marker = marker;
     objects.pointClouds.push(pc);
   }
 }
 loadCSVs();
 
-/* ---------------------------------------------------- */
-/* PLAYBACK                                             */
-/* ---------------------------------------------------- */
-const playback = { frame: 0, playing: false, speed: 1 };
-let longestCSV = 0;
-let ready = false;
+/* ---------------- PLAYBACK ------------------------- */
+const playback={frame:0,playing:false,speed:1};
+let longestCSV=0;
+let ready=false;
 
-async function initPlayback() {
-  while (!objects.pointClouds.length) {
-    await new Promise(r => setTimeout(r, 50));
-  }
+async function initPlayback(){
+  while(!objects.pointClouds.length) await new Promise(r=>setTimeout(r,50));
+  objects.pointClouds.forEach(pc=>longestCSV=Math.max(longestCSV,pc.geometry.attributes.position.count));
 
-  for (const pc of objects.pointClouds) {
-    longestCSV = Math.max(longestCSV, pc.geometry.attributes.position.count);
-  }
+  const fPlayback=pane.addFolder({title:'Playback'});
+  fPlayback.addBinding(playback,'frame',{min:0,max:longestCSV,step:1});
+  fPlayback.addBinding(playback,'playing');
+  fPlayback.addBinding(playback,'speed',{min:10,max:60});
 
-  const f = pane.addFolder({ title: 'Playback' });
-  f.addBinding(playback, 'frame', { min: 0, max: longestCSV, step: 1 });
-  f.addBinding(playback, 'playing');
-  f.addBinding(playback, 'speed', { min: 1, max: 60 });
+  const fView=pane.addFolder({title:'View'});
+  fView.addBinding(settings,'showHeat');
+  fView.addBinding(settings,'showGLTF');
 
-  const v = pane.addFolder({ title: 'View' });
-  v.addBinding(settings, 'showHeat');
-  v.addBinding(settings, 'showGLTF');
+  const fHeat=pane.addFolder({title:'Heatmap'});
+  fHeat.addBinding(HEAT_PARAMS,'radius',{min:1,max:50,step:1});
+  fHeat.addBinding(HEAT_PARAMS,'agentStrength',{min:0.001,max:0.5});
+  fHeat.addBinding(HEAT_PARAMS,'falloff',{min:1,max:8,step:1});
+  fHeat.addBinding(HEAT_PARAMS,'min',{min:0,max:2});
+  fHeat.addBinding(HEAT_PARAMS,'max',{min:0.1,max:5});
 
-  const h = pane.addFolder({ title: 'Heatmap' });
-  Object.keys(HEAT_PARAMS).forEach(k =>
-    h.addBinding(HEAT_PARAMS, k)
-  );
-
-  ready = true;
+  ready=true;
 }
 initPlayback();
 
-/* ---------------------------------------------------- */
-/* HEAT COLOR                                           */
-/* ---------------------------------------------------- */
+/* ---------------- HEAT COLOR ----------------------- */
 function heatColor(t) {
-  return new THREE.Color().setHSL((1 - t) * 0.66, 1, 0.5);
+    const c = new THREE.Color();
+    if (t < 0.25) {
+        const f = t / 0.25;
+        c.setRGB(1 - f, 1, 1);
+    } else if (t < 0.5) {
+        const f = (t - 0.25) / 0.25;
+        c.setRGB(0, 1, 1 - f);
+    } else if (t < 0.75) {
+        const f = (t - 0.5) / 0.25;
+        c.setRGB(f, 1, 0);
+    } else {
+        const f = (t - 0.75) / 0.25;
+        c.setRGB(1, 1 - f, 0);
+    }
+    return c;
 }
 
-/* ---------------------------------------------------- */
-/* HEAT UPDATE (OPTIMIZED)                               */
-/* ---------------------------------------------------- */
-function updateHeat(frame) {
-  const R = HEAT_PARAMS.radius;
-  const R2 = R * R;
+/* ---------------- HEAT UPDATE ---------------------- */
+function updateHeat(frame){
+  const R2 = HEAT_PARAMS.radius**2;
 
-  for (const pc of objects.pointClouds) {
-    const pos = pc.geometry.attributes.position;
-    const idx = Math.min(frame, pos.count - 1);
+  for(const pc of objects.pointClouds){
+    const pos=pc.geometry.attributes.position;
+    const idx=Math.min(frame,pos.count-1);
+    const px=pos.array[idx*3]*0.01;
+    const py=pos.array[idx*3+1]*0.01;
+    const pz=pos.array[idx*3+2]*0.01;
 
-    const px = pos.array[idx * 3] * 0.01;
-    const py = pos.array[idx * 3 + 1] * 0.01;
-    const pz = pos.array[idx * 3 + 2] * 0.01;
+    for(const mesh of objects.heatMeshes){
+      const {worldBS,grid,cellSize,heat,dirty,vx,vy,vz}=mesh.userData;
+      const dx=worldBS.center.x-px, dy=worldBS.center.y-py, dz=worldBS.center.z-pz;
+      if(dx*dx+dy*dy+dz*dz>(worldBS.radius+HEAT_PARAMS.radius)**2) continue;
 
-    for (const mesh of objects.meshes) {
-      const bs = mesh.geometry.boundingSphere;
-      const dx = bs.center.x - px;
-      const dy = bs.center.y - py;
-      const dz = bs.center.z - pz;
-      const r = bs.radius + R;
+      const gx=Math.floor(px/cellSize), gy=Math.floor(py/cellSize), gz=Math.floor(pz/cellSize);
 
-      if (dx * dx + dy * dy + dz * dz > r * r) continue;
-
-      const { grid, cellSize, heat, dirty } = mesh.userData;
-      const gx = Math.floor(px / cellSize);
-      const gy = Math.floor(py / cellSize);
-      const gz = Math.floor(pz / cellSize);
-
-      const gPos = mesh.geometry.attributes.position.array;
-
-      for (let ix = -1; ix <= 1; ix++) {
-        for (let iy = -1; iy <= 1; iy++) {
-          for (let iz = -1; iz <= 1; iz++) {
-            const key = `${gx + ix},${gy + iy},${gz + iz}`;
-            const list = grid.get(key);
-            if (!list) continue;
-
-            for (const i of list) {
-              const dx = gPos[i*3]   - px;
-              const dy = gPos[i*3+1] - py;
-              const dz = gPos[i*3+2] - pz;
-              const d2 = dx*dx + dy*dy + dz*dz;
-
-              if (d2 < R2) {
-                const t = Math.pow(1 - d2 / R2, HEAT_PARAMS.falloff);
-                heat[i] += t * HEAT_PARAMS.agentStrength;
-                dirty.add(i);
-              }
-            }
+      for(let ix=-1;ix<=1;ix++)
+      for(let iy=-1;iy<=1;iy++)
+      for(let iz=-1;iz<=1;iz++){
+        const list=grid.get(`${gx+ix},${gy+iy},${gz+iz}`);
+        if(!list) continue;
+        for(const i of list){
+          const dx=vx[i]-px, dy=vy[i]-py, dz=vz[i]-pz;
+          const d2=dx*dx+dy*dy+dz*dz;
+          if(d2<R2){
+            heat[i]+=Math.pow(1-d2/R2,HEAT_PARAMS.falloff)*HEAT_PARAMS.agentStrength;
+            dirty.add(i);
           }
         }
       }
     }
   }
 
-  for (const mesh of objects.meshes) {
-    const col = mesh.geometry.attributes.color;
-    const heat = mesh.userData.heat;
+  for(const mesh of objects.heatMeshes){
+    const col=mesh.geometry.attributes.color.array;
+    const heat=mesh.userData.heat;
+    for(const i of mesh.userData.dirty){
+      const t=THREE.MathUtils.clamp((heat[i]-HEAT_PARAMS.min)/(HEAT_PARAMS.max-HEAT_PARAMS.min),0,1);
+      const c=heatColor(t);
 
-    for (const i of mesh.userData.dirty) {
-      const nt = THREE.MathUtils.clamp(
-        (heat[i] - HEAT_PARAMS.min) / (HEAT_PARAMS.max - HEAT_PARAMS.min),
-        0, 1
-      );
-      const c = heatColor(nt);
-      col.array[i*3]   = c.r;
-      col.array[i*3+1] = c.g;
-      col.array[i*3+2] = c.b;
+      col[i*4]   = 1 * 0.1 + c.r * 0.9;
+      col[i*4+1] = 1 * 0.1 + c.g * 0.9;
+      col[i*4+2] = 1 * 0.1 + c.b * 0.9;
+      col[i*4+3] = 0.1 + 0.9 * t;
     }
-
-    if (mesh.userData.dirty.size) col.needsUpdate = true;
+    mesh.geometry.attributes.color.needsUpdate=true;
     mesh.userData.dirty.clear();
   }
 }
 
-/* ---------------------------------------------------- */
-/* RENDER LOOP                                          */
-/* ---------------------------------------------------- */
-let lastFrame = -1;
-
-function animate() {
+/* ---------------- RENDER LOOP ---------------------- */
+function animate(){
   stats.begin();
 
-  if (ready) {
-    if (playback.playing) {
+  if(ready){
+    if(playback.playing){
       playback.frame += playback.speed;
-      if (playback.frame >= longestCSV) playback.frame = 0;
+      if(playback.frame >= longestCSV) {
+        playback.frame = longestCSV - 1;
+        playback.playing = false;
+      }
       pane.refresh();
     }
 
     const f = Math.floor(playback.frame);
 
-    if (settings.showHeat && f !== lastFrame) {
-      updateHeat(f);
-      lastFrame = f;
+    // Visibility toggle
+    if(objects.gltfModel){
+      objects.gltfModel.visible = settings.showGLTF || !settings.showHeat;
+    }
+    for (const mesh of objects.heatMeshes) {
+        mesh.visible = settings.showHeat;
     }
 
-    if (objects.gltfModel) {
-      objects.gltfModel.visible = settings.showGLTF;
-    }
+    if(settings.showHeat && playback.playing) updateHeat(f);
 
-    for (const pc of objects.pointClouds) {
+    for(const pc of objects.pointClouds){
       const count = pc.geometry.attributes.position.count;
-      const draw = Math.min(f, count);
-      pc.geometry.setDrawRange(0, draw);
+      const drawCount = Math.min(f + 1, count);
+      pc.geometry.setDrawRange(0, drawCount);
 
       const marker = pc.userData.marker;
-      if (draw > 0) {
-        const i = draw - 1;
+      if(drawCount > 0){
         const p = pc.geometry.attributes.position.array;
-        marker.position.set(p[i*3]*0.01, p[i*3+1]*0.01, p[i*3+2]*0.01);
+        marker.position.set(
+          p[(drawCount-1)*3]*0.01,
+          p[(drawCount-1)*3+1]*0.01,
+          p[(drawCount-1)*3+2]*0.01
+        );
         marker.visible = true;
-      } else {
-        marker.visible = false;
-      }
+      } else marker.visible = false;
     }
   }
 
@@ -339,12 +339,10 @@ function animate() {
 }
 animate();
 
-/* ---------------------------------------------------- */
-/* RESIZE                                               */
-/* ---------------------------------------------------- */
-window.addEventListener('resize', () => {
-  camera.aspect = window.innerWidth / window.innerHeight;
+/* ---------------- RESIZE --------------------------- */
+window.addEventListener('resize',()=>{
+  camera.aspect=window.innerWidth/window.innerHeight;
   camera.updateProjectionMatrix();
-  renderer.setSize(window.innerWidth, window.innerHeight);
-  composer.setSize(window.innerWidth, window.innerHeight);
+  renderer.setSize(window.innerWidth,window.innerHeight);
+  composer.setSize(window.innerWidth,window.innerHeight);
 });
