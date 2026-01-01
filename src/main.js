@@ -160,6 +160,43 @@ async function loadCSVs(urls) {
 }
 
 /* ============================================================
+   BLACK LINES OVERLAY
+============================================================ */
+function loadLines() {
+    const loader = new GLTFLoader();
+
+    loader.load(
+        '/models/map_lines_low.glb',
+        (gltf) => {
+            const model = gltf.scene;
+
+            model.traverse((child) => {
+                if (child.isLine) {
+                    // Line rendering fixes
+                    child.material.color.set(0x000000);
+                    
+                    // Prevent flickering / Z-fighting
+                    child.material.depthWrite = true;  // ← here!
+                    child.material.depthTest = true;    // optional, usually true
+                }
+            });
+
+            scene.add(model);
+            console.log('Lines loaded:', model);
+        },
+        undefined,
+        (error) => {
+            console.error('Error loading GLB:', error);
+        }
+    );
+}
+
+loadLines();
+
+
+
+
+/* ============================================================
    GLTF LOADING & HEATMAP INIT
 ============================================================ */
 async function initHeatmap() {
