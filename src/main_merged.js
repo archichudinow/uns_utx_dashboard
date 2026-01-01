@@ -69,6 +69,11 @@ const playback = { frame: 0, playing: false, speed: 5 };
 let longestCSV = 0;
 let readyToPlay = false;
 
+// --- InstancedMesh for agents ---
+let markerMesh = null;
+// dummy Object3D reused for InstancedMesh updates
+const dummy = new THREE.Object3D();
+
 /* ============================================================
    CSV LOADING
 ============================================================ */
@@ -98,9 +103,6 @@ function parseCSVToPoints(csvText) {
 }
 
 async function loadCSVs(urls) {
-    const markerGeo = new THREE.SphereGeometry(2,16,16);
-    const markerMat = new THREE.MeshBasicMaterial({ color: 'black' });
-
     longestCSV = 0;
 
     for(const url of urls){
@@ -111,11 +113,6 @@ async function loadCSVs(urls) {
         pc.geometry.setDrawRange(0,0);
         scene.add(pc);
 
-        const marker = new THREE.Mesh(markerGeo, markerMat);
-        marker.visible = true;
-        scene.add(marker);
-
-        pc.userData.marker = marker;
         pc.userData.prevDrawCount = -1;
         objects.pointClouds.push(pc);
 
@@ -133,12 +130,31 @@ async function loadCSVs(urls) {
             const x = p[0]*WORLD_SCALE;
             const y = p[1]*WORLD_SCALE;
             const z = p[2]*WORLD_SCALE;
-            pc.userData.marker.position.set(x,y,z);
             agentsArray[idx*3] = x;
             agentsArray[idx*3+1] = y;
             agentsArray[idx*3+2] = z;
         }
     });
+
+    // --- create InstancedMesh for agents ---
+    const markerGeo = new THREE.SphereGeometry(2,16,16);
+    const markerMat = new THREE.MeshBasicMaterial({ color: 'black' });
+    markerMesh = new THREE.InstancedMesh(markerGeo, markerMat, objects.pointClouds.length);
+    markerMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    markerMesh.frustumCulled = false; // prevent disappearing on orbit
+    scene.add(markerMesh);
+
+    // set initial agent positions in InstancedMesh
+    objects.pointClouds.forEach((pc, idx) => {
+        dummy.position.set(
+            agentsArray[idx*3],
+            agentsArray[idx*3+1],
+            agentsArray[idx*3+2]
+        );
+        dummy.updateMatrix();
+        markerMesh.setMatrixAt(idx, dummy.matrix);
+    });
+    markerMesh.instanceMatrix.needsUpdate = true;
 
     console.log('CSV agents loaded:', objects.pointClouds.length, 'Longest CSV points:', longestCSV);
 }
@@ -185,20 +201,30 @@ async function initHeatmap() {
         meshList.push(o);
     });
 
-    vertexPosTexture = new THREE.DataTexture(vertexPosArray, heatTexSize, heatTexSize, THREE.RGBAFormat, THREE.FloatType);
+    // ✅ Keep Float32Array for vertex positions, avoids HALF_FLOAT_OES error
+    vertexPosTexture = new THREE.DataTexture(
+        vertexPosArray, 
+        heatTexSize, 
+        heatTexSize, 
+        THREE.RGBAFormat, 
+        THREE.FloatType
+    );
     vertexPosTexture.needsUpdate = true;
 
+    // ✅ Render targets use HalfFloat for reduced memory
     heatRT1 = new THREE.WebGLRenderTarget(heatTexSize, heatTexSize,{
-        format:THREE.RGBAFormat,type:THREE.FloatType,
-        minFilter:THREE.NearestFilter, magFilter:THREE.NearestFilter,
-        wrapS:THREE.ClampToEdgeWrapping, wrapT:THREE.ClampToEdgeWrapping
+        format:THREE.RGBAFormat,
+        type:THREE.HalfFloatType,
+        minFilter:THREE.NearestFilter,
+        magFilter:THREE.NearestFilter,
+        wrapS:THREE.ClampToEdgeWrapping,
+        wrapT:THREE.ClampToEdgeWrapping
     });
     heatRT2 = heatRT1.clone();
 
     heatScene = new THREE.Scene();
     heatCamera = new THREE.OrthographicCamera(-1,1,1,-1,0,1);
 
-    // Shader for heat accumulation
     heatMaterial = new THREE.ShaderMaterial({
         uniforms:{
             prevHeat:{value:heatRT1.texture},
@@ -206,13 +232,13 @@ async function initHeatmap() {
             agentsPos:{value:agentsArray},
             numAgents:{value:objects.pointClouds.length},
             radius:{value:AGENT_RADIUS},
-            playing:{value:true} // NEW uniform
+            playing:{value:true}
         },
         vertexShader:`void main(){gl_Position=vec4(position,1.0);}`,
         fragmentShader:`precision highp float;
             uniform sampler2D prevHeat;
             uniform sampler2D vertexPos;
-            uniform vec3 agentsPos[100];
+            uniform vec3 agentsPos[32];
             uniform int numAgents;
             uniform float radius;
             uniform bool playing;
@@ -223,7 +249,7 @@ async function initHeatmap() {
                 float heat = texture2D(prevHeat, uv).r;
 
                 if(playing){
-                    for(int i=0;i<100;i++){
+                    for(int i=0;i<32;i++){
                         if(i>=numAgents) break;
                         vec3 d = pos - agentsPos[i];
                         float d2 = dot(d,d);
@@ -238,7 +264,7 @@ async function initHeatmap() {
 
     heatScene.add(new THREE.Mesh(new THREE.PlaneGeometry(2,2),heatMaterial));
 
-    // Shader for rendering heatmap with multi-color gradient
+    // Shader for rendering heatmap
     meshList.forEach(mesh=>{
         mesh.material = new THREE.ShaderMaterial({
             uniforms:{
@@ -310,7 +336,6 @@ initScene();
    TWEAKPANE
 ============================================================ */
 const pane = new Pane();
-const frameSlider = pane.addBinding(playback,'frame',{min:0,max:100});
 pane.addButton({title:'Play / Pause'}).on('click',()=>{
     if(!readyToPlay) return;
     playback.playing = !playback.playing;
@@ -341,7 +366,6 @@ function animate(){
             }
 
             const p = pc.geometry.attributes.position.array;
-            const marker = pc.userData.marker;
 
             if(drawCount>0 && p.length>=3){
                 if(movingAgentsMask[idx]){
@@ -350,29 +374,33 @@ function animate(){
                     const y = p[idx3+1]*WORLD_SCALE;
                     const z = p[idx3+2]*WORLD_SCALE;
 
-                    if(marker.position.x!==x || marker.position.y!==y || marker.position.z!==z){
-                        agentsArray[idx*3] = x;
-                        agentsArray[idx*3+1] = y;
-                        agentsArray[idx*3+2] = z;
-                        marker.position.set(x,y,z);
-                        marker.visible = true;
-                    }
+                    agentsArray[idx*3] = x;
+                    agentsArray[idx*3+1] = y;
+                    agentsArray[idx*3+2] = z;
+
+                    dummy.position.set(x,y,z);
                 } else {
                     agentsArray[idx*3] = 1e6;
                     agentsArray[idx*3+1] = 1e6;
                     agentsArray[idx*3+2] = 1e6;
+                    dummy.position.set(1e6,1e6,1e6);
                 }
+
+                dummy.updateMatrix();
+                markerMesh.setMatrixAt(idx, dummy.matrix);
             }
         });
 
-        // update heatmap every 2 frames for performance
-        if(f % 2 === 0 && heatMaterial && heatRT1 && heatRT2){
+        markerMesh.instanceMatrix.needsUpdate = true;
+
+        if(f % 2 === 0){
             heatMaterial.uniforms.prevHeat.value = heatRT1.texture;
             heatMaterial.uniforms.agentsPos.value = agentsArray;
-            heatMaterial.uniforms.playing.value = playback.playing; // update uniform
+            heatMaterial.uniforms.numAgents.value = objects.pointClouds.length;
+            heatMaterial.uniforms.playing.value = playback.playing;
 
             renderer.setRenderTarget(heatRT2);
-            renderer.render(heatScene, heatCamera);
+            renderer.render(heatScene,heatCamera);
             renderer.setRenderTarget(null);
 
             [heatRT1,heatRT2] = [heatRT2,heatRT1];
