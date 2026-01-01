@@ -1,5 +1,15 @@
-body {
-  margin: 0;
-  overflow: hidden;
+html, body {
+    margin: 0;
+    padding: 0;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    touch-action: none; /* Prevent pinch/scroll gestures */
+    -webkit-overflow-scrolling: none;
 }
 
+canvas.threejs {
+    display: block;
+    width: 100%;
+    height: 100%;
+}
