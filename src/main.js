@@ -346,7 +346,7 @@ pane.addButton({title:'Play / Pause'}).on('click',()=>{
    ANIMATION LOOP
 ============================================================ */
 function animate(){
-    if(!isMobile) stats.begin();
+    stats.begin();
 
     if(readyToPlay && playback.playing){
         playback.frame += playback.speed;
@@ -416,7 +416,7 @@ function animate(){
     controls.update();
     renderer.render(scene,camera);
 
-    if(!isMobile) stats.end();
+    stats.end();
     requestAnimationFrame(animate);
 }
 
