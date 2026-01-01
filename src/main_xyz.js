@@ -5,6 +5,12 @@ import Papa from 'papaparse';
 import { Pane } from 'tweakpane';
 import Stats from 'stats.js';
 
+/* ---------------- DEVICE / PERFORMANCE ---------------- */
+const IS_MOBILE = /iPhone|iPad|Android/i.test(navigator.userAgent);
+const MAX_DPR = IS_MOBILE ? 2 : 1.25;
+const WORLD_SCALE = 0.01;
+const MAX_AGENT_DISTANCE2 = 2500 * 2500;
+
 /* ---------------- STATS ---------------- */
 const stats = new Stats();
 document.body.appendChild(stats.dom);
@@ -166,7 +172,7 @@ async function loadCSVs() {
         '/csv/P3_S4_CHART.csv'
     ];
 
-    const markerGeo = new THREE.SphereGeometry(2,16,16);
+    const markerGeo = new THREE.SphereGeometry(1,16,16);
     const markerMat = new THREE.MeshBasicMaterial({ color:'black' });
 
     for (const url of urls) {

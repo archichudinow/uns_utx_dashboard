@@ -1,9 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
-import { Pane } from 'tweakpane';
 import Stats from 'stats.js';
-import Papa from 'papaparse';
 
 /* ============================================================
    BASIC SETUP
@@ -22,8 +20,8 @@ scene.add(dirLight);
 /* ============================================================
    CAMERA & RENDERER
 ============================================================ */
-const camera = new THREE.PerspectiveCamera(12, window.innerWidth / window.innerHeight, 1, 5000);
-camera.position.set(-400, 600, -1000);
+const camera = new THREE.PerspectiveCamera(45, window.innerWidth / window.innerHeight, 1, 5000);
+camera.position.set(0, 50, 150);
 
 const canvas = document.querySelector('canvas.threejs');
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
@@ -53,120 +51,6 @@ const meshList = [];
 const agents = [];
 const agentSpheres = [];
 const glbCenter = new THREE.Vector3();
-
-
-/* ---------------- STORAGE ---------------- */
-const objects = { pointClouds: [] };
-
-/* ---------------- CSV PARSING ---------------- */
-function parseCSVToPoints(csvText) {
-    const rows = Papa.parse(csvText, { dynamicTyping: true }).data;
-    const valid = rows.filter(r => r.length === 3 && r.every(Number.isFinite));
-    if (!valid.length) return null;
-
-    const positions = new Float32Array(valid.length * 3);
-    const colors = new Float32Array(valid.length * 3);
-
-    for (let i = 0; i < valid.length; i++) {
-        positions[i*3]   = valid[i][0];
-        positions[i*3+1] = valid[i][2];
-        positions[i*3+2] = -valid[i][1];
-        colors.set([0,0,0], i*3);
-    }
-
-    const geometry = new THREE.BufferGeometry();
-    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-
-    return new THREE.Points(
-        geometry,
-        new THREE.PointsMaterial({ size: 1, sizeAttenuation: false, vertexColors: true, transparent: true })
-    );
-}
-
-async function loadCSV(url) {
-    const text = await (await fetch(url)).text();
-    return parseCSVToPoints(text);
-}
-
-/* ---------------- LOAD MULTIPLE CSVs ---------------- */
-async function loadCSVs() {
-    const urls = [
-        '/csv/P1_S2_CHART.csv','/csv/P1_S4_CHART.csv','/csv/P2_S1A_CHART.csv',
-        '/csv/P2_S2_CHART.csv','/csv/P2_S3_CHART.csv','/csv/P2_S4_CHART.csv',
-        '/csv/P3_S1A_CHART.csv','/csv/P3_S2_CHART.csv','/csv/P3_S3_CHART.csv',
-        '/csv/P3_S4_CHART.csv'
-    ];
-
-    const markerGeo = new THREE.SphereGeometry(2,16,16);
-    const markerMat = new THREE.MeshBasicMaterial({ color:'black' });
-
-    for (const url of urls) {
-        const pc = await loadCSV(url);
-        if (!pc) continue;
-
-        pc.scale.setScalar(0.01); // WORLD_SCALE
-        pc.geometry.setDrawRange(0,0);
-        scene.add(pc);
-
-        const marker = new THREE.Mesh(markerGeo, markerMat);
-        marker.visible = false;
-        scene.add(marker);
-
-        pc.userData.marker = marker;
-        pc.userData.prevDrawCount = 0;
-        objects.pointClouds.push(pc);
-    }
-}
-loadCSVs();
-
-/* ---------------- PLAYBACK & GUI ---------------- */
-const playback = { frame:0, playing:false, speed:5 };
-let longestCSV = 0;
-let ready = false;
-
-const pane = new Pane();
-const folder = pane.addFolder({ title:'Playback' });
-folder.addButton({ title:'Play / Pause' }).on('click', ()=>playback.playing=!playback.playing);
-const frameSlider = folder.addBinding(playback,'frame',{ min:0,max:100,step:1 });
-
-async function initPlayback() {
-    while (!objects.pointClouds.length) await new Promise(r=>setTimeout(r,50));
-    objects.pointClouds.forEach(pc => longestCSV = Math.max(longestCSV, pc.geometry.attributes.position.count));
-    frameSlider.max = longestCSV-1;
-    ready = true;
-}
-initPlayback();
-
-
-/* ---------------- AGENT ANIMATION ---------------- */
-function animateAgents() {
-    if (ready && playback.playing) playback.frame = Math.min(playback.frame + playback.speed, longestCSV-1);
-    if (ready) {
-        const f = Math.floor(playback.frame);
-        for (const pc of objects.pointClouds) {
-            const count = pc.geometry.attributes.position.count;
-            const drawCount = Math.min(f+1,count);
-            if (drawCount !== pc.userData.prevDrawCount) {
-                pc.geometry.setDrawRange(0,drawCount);
-                pc.userData.prevDrawCount = drawCount;
-
-                const marker = pc.userData.marker;
-                if (drawCount>0) {
-                    const p = pc.geometry.attributes.position.array;
-                    marker.position.set(
-                        p[(drawCount-1)*3]*0.01,
-                        p[(drawCount-1)*3+1]*0.01,
-                        p[(drawCount-1)*3+2]*0.01
-                    );
-                    marker.visible=true;
-                } else marker.visible=false;
-            }
-        }
-    }
-    requestAnimationFrame(animateAgents);
-}
-animateAgents();
 
 /* ============================================================
    LOAD MODEL & BUILD HEAT DATA
