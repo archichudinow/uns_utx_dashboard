@@ -27,11 +27,11 @@ const isMobile = /Mobi|Android/i.test(navigator.userAgent);
 
 const renderer = new THREE.WebGLRenderer({
     canvas,
-    antialias: !isMobile,
+    antialias: true,
     powerPreference: 'high-performance',
 });
 renderer.setSize(window.innerWidth, window.innerHeight);
-renderer.setPixelRatio(isMobile ? 1 : Math.min(window.devicePixelRatio, 1.25));
+renderer.setPixelRatio(isMobile ? 1.25 : Math.min(window.devicePixelRatio, 1.25));
 renderer.outputEncoding = THREE.sRGBEncoding;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 
